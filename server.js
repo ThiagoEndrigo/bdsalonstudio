@@ -182,34 +182,31 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
   const originalName = req.file.originalname;
   const startTime = Date.now();
 
-  const env = { ...process.env, PGPASSWORD: 'postgres' };
-  const psqlPath = 'C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe';
-
-  execFile(psqlPath, ['-h', '127.0.0.1', '-p', '5432', '-U', 'postgres', '-d', 'salonstudio', '-w', '-f', filePath], { env }, async (error, stdout, stderr) => {
-    // Delete temp file after import
+  try {
+    const sqlContent = fs.readFileSync(filePath, 'utf8');
+    
+    // Execute SQL content directly on the PostgreSQL pool (works on Render, Neon & Local)
+    await pool.query(sqlContent);
+    
     try { fs.unlinkSync(filePath); } catch (e) {}
 
     const duration = Date.now() - startTime;
+    const schemasRes = await pool.query(`
+      SELECT nspname FROM pg_namespace 
+      WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema'
+      ORDER BY nspname;
+    `);
 
-    try {
-      const schemasRes = await pool.query(`
-        SELECT nspname FROM pg_namespace 
-        WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema'
-        ORDER BY nspname;
-      `);
-      res.json({
-        message: `Banco '${originalName}' importado com sucesso em ${duration}ms!`,
-        duration,
-        schemas: schemasRes.rows.map(r => r.nspname)
-      });
-    } catch (err) {
-      res.json({
-        message: `Banco '${originalName}' importado com sucesso em ${duration}ms!`,
-        duration,
-        schemas: []
-      });
-    }
-  });
+    res.json({
+      message: `Banco '${originalName}' importado com sucesso em ${duration}ms!`,
+      duration,
+      schemas: schemasRes.rows.map(r => r.nspname)
+    });
+  } catch (err) {
+    try { fs.unlinkSync(filePath); } catch (e) {}
+    console.error('Erro na importação SQL:', err);
+    res.status(500).json({ error: 'Falha ao importar SQL para o banco: ' + err.message });
+  }
 });
 
 // Pre-built report query templates
