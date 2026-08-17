@@ -37,10 +37,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  const btnConfigApi = document.getElementById('btnConfigApi');
+  const DEFAULT_RENDER_URL = 'https://bdsalonstudio.onrender.com';
+
+  function getApiUrl(endpoint) {
+    if (window.location.hostname.includes('github.io')) {
+      const savedApi = localStorage.getItem('salonstudio_api_url') || DEFAULT_RENDER_URL;
+      return savedApi.replace(/\/$/, '') + endpoint;
+    }
+    return endpoint;
+  }
+
+  if (window.location.hostname.includes('github.io') && btnConfigApi) {
+    btnConfigApi.classList.remove('hidden');
+    btnConfigApi.addEventListener('click', () => {
+      const current = localStorage.getItem('salonstudio_api_url') || DEFAULT_RENDER_URL;
+      const input = prompt('Digite a URL do seu servidor Backend no Render (ex: https://bdsalonstudio.onrender.com):', current);
+      if (input !== null && input.trim() !== '') {
+        localStorage.setItem('salonstudio_api_url', input.trim());
+        alert('URL do servidor atualizada para: ' + input.trim());
+        loadSchemas();
+        loadTemplates();
+      }
+    });
+  }
+
   // Load Schemas
   async function loadSchemas() {
     try {
-      const res = await fetch('/api/schemas');
+      const res = await fetch(getApiUrl('/api/schemas'));
       const data = await res.json();
       schemaSelect.innerHTML = '';
       data.schemas.forEach(schema => {
@@ -64,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tablesTree.innerHTML = '<div class="loading-spinner">Carregando tabelas...</div>';
 
     try {
-      const res = await fetch(`/api/tables?schema=${encodeURIComponent(schema)}`);
+      const res = await fetch(getApiUrl(`/api/tables?schema=${encodeURIComponent(schema)}`));
       const data = await res.json();
       schemaTablesData = data.tables || {};
       renderTablesTree(schemaTablesData);
@@ -145,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load Query Templates
   async function loadTemplates() {
     try {
-      const res = await fetch('/api/templates');
+      const res = await fetch(getApiUrl('/api/templates'));
       const data = await res.json();
       templatesList.innerHTML = '';
       data.templates.forEach(tpl => {
@@ -183,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
     statusMessage.textContent = 'Aguardando resposta do banco PostgreSQL...';
 
     try {
-      const res = await fetch('/api/query', {
+      const res = await fetch(getApiUrl('/api/query'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql, schema: schemaSelect.value })
@@ -467,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
       formData.append('sqlFile', fileToUpload);
 
       try {
-        const res = await fetch('/api/upload', {
+        const res = await fetch(getApiUrl('/api/upload'), {
           method: 'POST',
           body: formData
         });
