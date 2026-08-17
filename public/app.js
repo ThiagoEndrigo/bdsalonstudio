@@ -511,7 +511,19 @@ document.addEventListener('DOMContentLoaded', () => {
       btnConfirmUpload.disabled = true;
       btnCancelUpload.disabled = true;
       uploadProgressContainer.classList.remove('hidden');
-      uploadStatusText.textContent = `Enviando e importando '${fileToUpload.name}' para o PostgreSQL...`;
+      
+      let seconds = 0;
+      uploadStatusText.textContent = `Enviando '${fileToUpload.name}' para o Render... (0s)`;
+      const timer = setInterval(() => {
+        seconds++;
+        if (seconds < 10) {
+          uploadStatusText.textContent = `Enviando '${fileToUpload.name}' para o Render... (${seconds}s)`;
+        } else if (seconds < 30) {
+          uploadStatusText.textContent = `Processando e criando tabelas no PostgreSQL... (${seconds}s)`;
+        } else {
+          uploadStatusText.textContent = `Inserindo dados no banco (quase lá)... (${seconds}s)`;
+        }
+      }, 1000);
 
       const formData = new FormData();
       formData.append('sqlFile', fileToUpload);
@@ -521,6 +533,8 @@ document.addEventListener('DOMContentLoaded', () => {
           method: 'POST',
           body: formData
         });
+        clearInterval(timer);
+
         const data = await res.json();
 
         btnCancelUpload.disabled = false;
@@ -535,11 +549,12 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
           uploadModal.classList.add('hidden');
           loadSchemas();
-        }, 1200);
+        }, 1500);
       } catch (err) {
+        clearInterval(timer);
         btnCancelUpload.disabled = false;
         btnConfirmUpload.disabled = false;
-        alert('Erro de conexão ao carregar banco: ' + err.message);
+        alert('Erro de conexão ao carregar banco: ' + err.message + '\n\nVerifique se a URL no botão "⚙️ API Render" está correta.');
         uploadProgressContainer.classList.add('hidden');
       }
     });
