@@ -6,15 +6,24 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const pool = new Pool({
-  host: '127.0.0.1',
-  port: 5432,
-  user: 'postgres',
-  password: 'postgres',
-  database: 'salonstudio',
+const connectionString = process.env.DATABASE_URL;
+
+const poolConfig = connectionString ? {
+  connectionString,
+  ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
-});
+} : {
+  host: process.env.PGHOST || '127.0.0.1',
+  port: process.env.PGPORT || 5432,
+  user: process.env.PGUSER || 'postgres',
+  password: process.env.PGPASSWORD || 'postgres',
+  database: process.env.PGDATABASE || 'salonstudio',
+  max: 10,
+  idleTimeoutMillis: 30000,
+};
+
+const pool = new Pool(poolConfig);
 
 app.use(cors());
 app.use(express.json());
