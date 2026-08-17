@@ -176,6 +176,42 @@ app.post('/api/query', async (req, res) => {
   }
 });
 
+function convertCopyToInserts(sql) {
+  if (!sql.includes('COPY') && !sql.includes('copy')) return sql;
+  const lines = sql.split(/\r?\n/);
+  const resultLines = [];
+  let inCopy = false;
+  let copyTable = '';
+  let copyCols = '';
+
+  for (let line of lines) {
+    if (!inCopy) {
+      const match = line.match(/^COPY\s+([^\s]+)\s*\(([^)]+)\)\s+FROM\s+stdin;/i);
+      if (match) {
+        inCopy = true;
+        copyTable = match[1];
+        copyCols = match[2];
+        continue;
+      }
+      resultLines.push(line);
+    } else {
+      if (line.trim() === '\\.') {
+        inCopy = false;
+        continue;
+      }
+      if (!line.trim()) continue;
+      
+      const values = line.split('\t').map(val => {
+        if (val === '\\N') return 'NULL';
+        const escaped = val.replace(/'/g, "''");
+        return `'${escaped}'`;
+      });
+      resultLines.push(`INSERT INTO ${copyTable} (${copyCols}) VALUES (${values.join(', ')});`);
+    }
+  }
+  return resultLines.join('\n');
+}
+
 // Upload and import SQL file into PostgreSQL
 app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
   req.setTimeout(10 * 60 * 1000); // 10 minutes timeout for large files
@@ -193,7 +229,10 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
   try {
     let sqlContent = fs.readFileSync(filePath, 'utf8');
     
-    // Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
+    // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
+    sqlContent = convertCopyToInserts(sqlContent);
+
+    // 2. Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
     sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
 
     client = await pool.connect();
