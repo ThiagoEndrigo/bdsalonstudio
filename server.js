@@ -7,6 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const connectionString = process.env.DATABASE_URL;
+const isExternalHost = process.env.PGHOST && process.env.PGHOST !== '127.0.0.1' && process.env.PGHOST !== 'localhost';
 
 const poolConfig = connectionString ? {
   connectionString,
@@ -19,6 +20,7 @@ const poolConfig = connectionString ? {
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || 'postgres',
   database: process.env.PGDATABASE || 'salonstudio',
+  ssl: isExternalHost ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30000,
 };
