@@ -74,21 +74,37 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load Schemas
   async function loadSchemas() {
     try {
+      schemaSelect.innerHTML = '<option value="">Conectando ao servidor...</option>';
       const res = await fetch(getApiUrl('/api/schemas'));
+      if (!res.ok) throw new Error('Servidor respondeu com status ' + res.status);
       const data = await res.json();
       schemaSelect.innerHTML = '';
-      data.schemas.forEach(schema => {
-        const option = document.createElement('option');
-        option.value = schema;
-        option.textContent = schema;
-        if (schema === 'company_keilafrutuoso') {
-          option.selected = true;
-        }
-        schemaSelect.appendChild(option);
-      });
+      if (!data.schemas || data.schemas.length === 0) {
+        schemaSelect.innerHTML = '<option value="public">public (padrão)</option>';
+      } else {
+        data.schemas.forEach(schema => {
+          const option = document.createElement('option');
+          option.value = schema;
+          option.textContent = schema;
+          if (schema === 'company_keilafrutuoso') {
+            option.selected = true;
+          }
+          schemaSelect.appendChild(option);
+        });
+      }
       loadTables();
     } catch (err) {
       console.error('Error loading schemas:', err);
+      schemaSelect.innerHTML = '<option value="">Erro ao conectar</option>';
+      if (window.location.hostname.includes('github.io')) {
+        tablesTree.innerHTML = `
+          <div class="error-box" style="margin: 12px; font-size: 0.85rem;">
+            ⚠️ <b>Aguardando conexão com o Render...</b><br><br>
+            • Se o serviço no Render estava inativo, ele leva ~40 segundos para ligar.<br>
+            • Confirme se no botão <b>⚙️ API Render</b> no topo está a URL exata do seu Web Service no Render.<br>
+            • Verifique se no painel do Render o status está <b style="color: #22c55e;">Live</b>.
+          </div>`;
+      }
     }
   }
 
