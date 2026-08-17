@@ -173,6 +173,9 @@ app.post('/api/query', async (req, res) => {
 
 // Upload and import SQL file into PostgreSQL
 app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
+  req.setTimeout(10 * 60 * 1000); // 10 minutes timeout for large files
+  res.setTimeout(10 * 60 * 1000);
+
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
   }
@@ -181,11 +184,14 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
   const originalName = req.file.originalname;
   const startTime = Date.now();
 
+  let client;
   try {
     const sqlContent = fs.readFileSync(filePath, 'utf8');
     
-    // Execute SQL content directly on the PostgreSQL pool (works on Render, Neon & Local)
-    await pool.query(sqlContent);
+    client = await pool.connect();
+    // Execute SQL content directly on dedicated client
+    await client.query(sqlContent);
+    client.release();
     
     try { fs.unlinkSync(filePath); } catch (e) {}
 
@@ -202,6 +208,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
       schemas: schemasRes.rows.map(r => r.nspname)
     });
   } catch (err) {
+    if (client) client.release();
     try { fs.unlinkSync(filePath); } catch (e) {}
     console.error('Erro na importação SQL:', err);
     res.status(500).json({ error: 'Falha ao importar SQL para o banco: ' + err.message });
