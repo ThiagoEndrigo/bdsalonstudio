@@ -42,7 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getApiUrl(endpoint) {
     if (window.location.hostname.includes('github.io')) {
-      const savedApi = localStorage.getItem('salonstudio_api_url') || DEFAULT_RENDER_URL;
+      let savedApi = localStorage.getItem('salonstudio_api_url') || DEFAULT_RENDER_URL;
+      if (savedApi.startsWith('postgres') || !savedApi.startsWith('http')) {
+        savedApi = DEFAULT_RENDER_URL;
+        localStorage.removeItem('salonstudio_api_url');
+      }
       return savedApi.replace(/\/$/, '') + endpoint;
     }
     return endpoint;
@@ -52,10 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
     btnConfigApi.classList.remove('hidden');
     btnConfigApi.addEventListener('click', () => {
       const current = localStorage.getItem('salonstudio_api_url') || DEFAULT_RENDER_URL;
-      const input = prompt('Digite a URL do seu servidor Backend no Render (ex: https://bdsalonstudio.onrender.com):', current);
+      const input = prompt('Digite o link HTTP do seu Web Service no Render (ex: https://bdsalonstudio.onrender.com):', current);
       if (input !== null && input.trim() !== '') {
-        localStorage.setItem('salonstudio_api_url', input.trim());
-        alert('URL do servidor atualizada para: ' + input.trim());
+        const val = input.trim();
+        if (val.startsWith('postgres')) {
+          alert('⚠️ Atenção: Você colou o link do banco PostgreSQL!\n\nNo painel do Render, o link do PostgreSQL (postgresql://...) deve ser colado em "Environment Variables" com a chave DATABASE_URL.\n\nAqui no botão "API Render", você deve colar o link do seu Web Service (ex: https://bdsalonstudio.onrender.com).');
+          return;
+        }
+        localStorage.setItem('salonstudio_api_url', val);
+        alert('URL do servidor web atualizada com sucesso!');
         loadSchemas();
         loadTemplates();
       }
