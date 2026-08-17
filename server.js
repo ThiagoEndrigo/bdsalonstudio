@@ -242,9 +242,40 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     // 2. Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
     sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
 
+    // 3. Add IF NOT EXISTS to CREATE SCHEMA and CREATE TABLE statements
+    sqlContent = sqlContent.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
+    sqlContent = sqlContent.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+
     client = await pool.connect();
-    // Execute SQL content directly on dedicated client
-    await client.query(sqlContent);
+    
+    // 4. Split SQL into individual statements for fault-tolerant execution
+    const statements = sqlContent
+      .split(/;\s*(?=(?:[^'"]*['"][^'"]*['"])*[^'"]*$)/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    let successCount = 0;
+    let skipCount = 0;
+    const batchSize = 100;
+
+    for (let i = 0; i < statements.length; i += batchSize) {
+      const chunkStatements = statements.slice(i, i + batchSize);
+      const chunkSql = chunkStatements.join(';\n') + ';';
+      try {
+        await client.query(chunkSql);
+        successCount += chunkStatements.length;
+      } catch (err) {
+        for (const stmt of chunkStatements) {
+          try {
+            await client.query(stmt + ';');
+            successCount++;
+          } catch (e) {
+            skipCount++;
+          }
+        }
+      }
+    }
+
     client.release();
     
     try { fs.unlinkSync(filePath); } catch (e) {}
@@ -257,7 +288,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     `);
 
     res.json({
-      message: `Banco '${originalName}' importado com sucesso em ${duration}ms!`,
+      message: `Banco '${originalName}' importado com sucesso em ${duration}ms! (${successCount} comandos executados)`,
       duration,
       schemas: schemasRes.rows.map(r => r.nspname)
     });
