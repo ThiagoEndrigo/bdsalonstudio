@@ -23,6 +23,7 @@ const poolConfig = connectionString ? {
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 } : {
   host: process.env.PGHOST || '127.0.0.1',
   port: process.env.PGPORT || 5432,
@@ -32,9 +33,13 @@ const poolConfig = connectionString ? {
   ssl: isExternalHost ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 };
 
 const pool = new Pool(poolConfig);
+pool.on('error', (err) => {
+  console.error('Unexpected pool error on idle client:', err);
+});
 
 app.use(cors({
   origin: '*',
