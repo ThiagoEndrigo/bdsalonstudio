@@ -191,8 +191,11 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
   let client;
   try {
-    const sqlContent = fs.readFileSync(filePath, 'utf8');
+    let sqlContent = fs.readFileSync(filePath, 'utf8');
     
+    // Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
+    sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
+
     client = await pool.connect();
     // Execute SQL content directly on dedicated client
     await client.query(sqlContent);
