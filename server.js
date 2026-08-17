@@ -2,9 +2,18 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Setup upload directory
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+const upload = multer({ dest: uploadDir });
 
 const connectionString = process.env.DATABASE_URL;
 const isExternalHost = process.env.PGHOST && process.env.PGHOST !== '127.0.0.1' && process.env.PGHOST !== 'localhost';
@@ -32,7 +41,6 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
-app.options('*', cors());
 app.use(express.json());
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -88,20 +96,6 @@ app.get('/api/tables', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-const fs = require('fs');
-const multer = require('multer');
-const { execFile } = require('child_process');
-
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const upload = multer({
-  dest: uploadDir,
-  limits: { fileSize: 500 * 1024 * 1024 } // 500 MB limit
 });
 
 function extractTableName(sql) {
