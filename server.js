@@ -186,11 +186,18 @@ function convertCopyToInserts(sql) {
 
   for (let line of lines) {
     if (!inCopy) {
-      const match = line.match(/^COPY\s+([^\s]+)\s*\(([^)]+)\)\s+FROM\s+stdin;/i);
-      if (match) {
+      const matchWithCols = line.match(/^COPY\s+([^\s]+)\s*\(([^)]+)\)\s+FROM\s+stdin;/i);
+      const matchNoCols = line.match(/^COPY\s+([^\s]+)\s+FROM\s+stdin;/i);
+
+      if (matchWithCols) {
         inCopy = true;
-        copyTable = match[1];
-        copyCols = match[2];
+        copyTable = matchWithCols[1];
+        copyCols = ` (${matchWithCols[2]})`;
+        continue;
+      } else if (matchNoCols) {
+        inCopy = true;
+        copyTable = matchNoCols[1];
+        copyCols = '';
         continue;
       }
       resultLines.push(line);
@@ -206,7 +213,7 @@ function convertCopyToInserts(sql) {
         const escaped = val.replace(/'/g, "''");
         return `'${escaped}'`;
       });
-      resultLines.push(`INSERT INTO ${copyTable} (${copyCols}) VALUES (${values.join(', ')});`);
+      resultLines.push(`INSERT INTO ${copyTable}${copyCols} VALUES (${values.join(', ')});`);
     }
   }
   return resultLines.join('\n');
