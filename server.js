@@ -45,6 +45,11 @@ app.use(express.json());
 app.use(express.static(__dirname));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // Get schemas
 app.get('/api/schemas', async (req, res) => {
   try {
@@ -258,6 +263,7 @@ app.get('/api/templates', (req, res) => {
   res.json({ templates });
 });
 
-app.listen(PORT, () => {
-  console.log(`SalonStudio SQL Explorer running on http://localhost:${PORT}`);
+const HOST = '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`SalonStudio SQL Explorer running on http://${HOST}:${PORT}`);
 });
