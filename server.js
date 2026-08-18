@@ -56,6 +56,11 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Version check endpoint
+app.get('/api/version', (req, res) => {
+  res.json({ version: 'v3.5-mega-chunk-fix', time: new Date().toISOString() });
+});
+
 // Get schemas
 app.get('/api/schemas', async (req, res) => {
   try {
