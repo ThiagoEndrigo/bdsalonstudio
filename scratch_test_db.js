@@ -56,36 +56,37 @@ async function run() {
   const rawSql = fs.readFileSync('banco_salonstudio_2026-08-17_12-00-01.sql', 'utf8');
   let cleanSql = convertCopyToInserts(rawSql).replace(/^\\.*$/gm, '').trim();
 
-  // Extract schemas from the SQL file (e.g. CREATE SCHEMA company_deboranails;)
+  // Strip superuser-only meta commands (EXTENSION, OWNER TO, GRANT)
+  cleanSql = cleanSql.replace(/^.*EXTENSION.*$/gm, '');
+  cleanSql = cleanSql.replace(/^.*OWNER TO .*$/gm, '');
+  cleanSql = cleanSql.replace(/^.*GRANT ALL ON .*$/gm, '');
+
+  // Extract schemas to drop old conflicting versions for ultra-fast clean restore
   const schemaMatches = cleanSql.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
   const schemasToDrop = schemaMatches.map(s => s.replace(/CREATE SCHEMA ([^\s;]+);/i, '$1'));
 
-  console.log('Schemas detected in dump:', schemasToDrop);
+  console.log('Schemas to clean:', schemasToDrop);
 
   const startTime = Date.now();
   const client = await pool.connect();
   
-  // Drop existing schemas to prevent DDL conflicts
   for (const schema of schemasToDrop) {
     if (schema !== 'public') {
-      try {
-        await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE;`);
-      } catch (e) {}
+      try { await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE;`); } catch (e) {}
     }
   }
 
-  // Add IF NOT EXISTS just in case
   cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
+  cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
 
-  console.log('Executing full SQL dump in 1 single transaction...');
   try {
     await client.query('BEGIN;');
     await client.query(cleanSql);
     await client.query('COMMIT;');
-    console.log(`FULL IMPORT SUCCESS in ${Date.now() - startTime} ms!`);
+    console.log(`CLEAN SINGLE-TRANSACTION IMPORT SUCCESS in ${Date.now() - startTime} ms!`);
   } catch (err) {
     await client.query('ROLLBACK;');
-    console.error('Single transaction error:', err.message);
+    console.error('Error:', err.message);
   } finally {
     client.release();
     await pool.end();

@@ -285,8 +285,11 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
     sqlContent = convertCopyToInserts(sqlContent);
 
-    // 2. Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
+    // 2. Strip psql meta-commands and superuser-only statements (EXTENSION, OWNER TO, GRANT)
     sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
+    sqlContent = sqlContent.replace(/^.*EXTENSION.*$/gm, '');
+    sqlContent = sqlContent.replace(/^.*OWNER TO .*$/gm, '');
+    sqlContent = sqlContent.replace(/^.*GRANT ALL ON .*$/gm, '');
 
     // 3. Extract schemas to drop old conflicting versions for ultra-fast clean restore
     const schemaMatches = sqlContent.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
