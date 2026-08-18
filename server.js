@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const zlib = require('zlib');
+const AdmZip = require('adm-zip');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -279,8 +280,21 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     let fileBuffer = req.file.buffer ? req.file.buffer : fs.readFileSync(req.file.path);
     if (fileBuffer && fileBuffer[0] === 0x1f && fileBuffer[1] === 0x8b) {
       fileBuffer = zlib.gunzipSync(fileBuffer);
+    } else if (fileBuffer && fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b) {
+      try {
+        const zip = new AdmZip(fileBuffer);
+        const zipEntries = zip.getEntries();
+        const sqlEntry = zipEntries.find(entry => entry.entryName.toLowerCase().endsWith('.sql'));
+        if (sqlEntry) {
+          fileBuffer = sqlEntry.getData();
+        } else if (zipEntries.length > 0) {
+          fileBuffer = zipEntries[0].getData();
+        }
+      } catch (e) {
+        console.warn('ZIP extraction failed, trying raw buffer:', e.message);
+      }
     }
-    let sqlContent = fileBuffer.toString('utf8');
+    let sqlContent = fileBuffer.toString('utf8').replace(/^\uFEFF/, '').trim();
     
     // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
     sqlContent = convertCopyToInserts(sqlContent);
