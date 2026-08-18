@@ -224,6 +224,44 @@ function convertCopyToInserts(sql) {
   return resultLines.join('\n');
 }
 
+function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let inString = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    
+    if (inString) {
+      current += char;
+      if (char === quoteChar) {
+        if (i + 1 < sql.length && sql[i + 1] === quoteChar) {
+          current += quoteChar;
+          i++;
+        } else {
+          inString = false;
+        }
+      }
+    } else {
+      if (char === "'" || char === '"') {
+        inString = true;
+        quoteChar = char;
+        current += char;
+      } else if (char === ';') {
+        const trimmed = current.trim();
+        if (trimmed) statements.push(trimmed);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+  }
+  const trimmed = current.trim();
+  if (trimmed) statements.push(trimmed);
+  return statements;
+}
+
 // Upload and import SQL file into PostgreSQL
 app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
   req.setTimeout(10 * 60 * 1000); // 10 minutes timeout for large files
@@ -253,11 +291,8 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     client = await pool.connect();
     
-    // 4. Split SQL into individual statements for fault-tolerant execution
-    const statements = sqlContent
-      .split(/;\s*(?=(?:[^'"]*['"][^'"]*['"])*[^'"]*$)/)
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+    // 4. Split SQL into individual statements using ultra-fast linear parser O(N)
+    const statements = splitSqlStatements(sqlContent);
 
     let successCount = 0;
     let skipCount = 0;
