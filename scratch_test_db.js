@@ -108,35 +108,73 @@ function splitSqlStatements(sql) {
   return statements;
 }
 
-const rawSql = fs.readFileSync('banco_salonstudio_2026-08-17_12-00-01.sql', 'utf8');
-let cleanSql = convertCopyToInserts(rawSql);
+async function test() {
+  const pool = new Pool({
+    host: '127.0.0.1',
+    port: 5432,
+    user: 'postgres',
+    password: 'postgres',
+    database: 'salonstudio'
+  });
 
-const cleanLines = cleanSql.split(/\r?\n/).filter(line => {
-  const trimmed = line.trim();
-  if (trimmed.startsWith('--')) return false;
-  if (trimmed.startsWith('\\')) return false;
-  if (trimmed.includes('OWNER TO')) return false;
-  if (trimmed.includes('EXTENSION')) return false;
-  if (trimmed.includes('GRANT ')) return false;
-  if (trimmed.includes('REVOKE ')) return false;
-  if (trimmed.startsWith('SET ')) return false;
-  if (trimmed.includes('SELECT pg_catalog.set_config')) return false;
-  return true;
-});
-cleanSql = cleanLines.join('\n');
+  const rawSql = fs.readFileSync('banco_salonstudio_2026-08-17_12-00-01.sql', 'utf8');
+  let cleanSql = convertCopyToInserts(rawSql);
 
-cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
-cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+  const cleanLines = cleanSql.split(/\r?\n/).filter(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('--')) return false;
+    if (trimmed.startsWith('\\')) return false;
+    if (trimmed.includes('OWNER TO')) return false;
+    if (trimmed.includes('EXTENSION')) return false;
+    if (trimmed.includes('GRANT ')) return false;
+    if (trimmed.includes('REVOKE ')) return false;
+    if (trimmed.startsWith('SET ')) return false;
+    if (trimmed.includes('SELECT pg_catalog.set_config')) return false;
+    return true;
+  });
+  cleanSql = cleanLines.join('\n');
 
-const statements = splitSqlStatements(cleanSql);
+  const schemaMatches = cleanSql.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
+  const schemasToDrop = schemaMatches.map(s => s.replace(/CREATE SCHEMA ([^\s;]+);/i, '$1'));
 
-console.log('Testing 500-statement mega-string queries locally...');
-const batchSize = 500;
-let failCount = 0;
-for (let i = 0; i < statements.length; i += batchSize) {
-  const chunkStatements = statements.slice(i, i + batchSize);
-  const chunkSql = chunkStatements.join(';\n') + ';';
-  // verify syntax of chunkSql
-  if (!chunkSql.trim()) console.warn('Empty chunk!');
+  const client = await pool.connect();
+  for (const schema of schemasToDrop) {
+    if (schema !== 'public') {
+      try { await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE;`); } catch (e) {}
+    }
+  }
+
+  cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
+  cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+  cleanSql = cleanSql.replace(/CREATE SEQUENCE ([^\s;]+)/gi, 'CREATE SEQUENCE IF NOT EXISTS $1');
+
+  const statements = splitSqlStatements(cleanSql);
+
+  console.log('Executing 4859 statements with clean schemas...');
+  let successCount = 0;
+  let failCount = 0;
+  const startTime = Date.now();
+
+  for (const stmt of statements) {
+    try {
+      await client.query(stmt);
+      successCount++;
+    } catch (err) {
+      failCount++;
+    }
+  }
+
+  console.log(`COMPLETED IN ${Date.now() - startTime} ms! Success: ${successCount}, Failures: ${failCount}`);
+
+  const schemasRes = await client.query(`
+    SELECT nspname FROM pg_namespace 
+    WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema'
+    ORDER BY nspname;
+  `);
+  console.log('SCHEMAS IN DB:', schemasRes.rows.map(r => r.nspname));
+
+  client.release();
+  await pool.end();
 }
-console.log(`Successfully verified ${Math.ceil(statements.length / batchSize)} mega-chunks! Total statements: ${statements.length}`);
+
+test();

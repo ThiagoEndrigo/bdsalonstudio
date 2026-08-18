@@ -360,29 +360,18 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     // 4. Inject safe DDL replacements
     sqlContent = sqlContent.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
     sqlContent = sqlContent.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
-    sqlContent = sqlContent.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
+    sqlContent = sqlContent.replace(/CREATE SEQUENCE ([^\s;]+)/gi, 'CREATE SEQUENCE IF NOT EXISTS $1');
 
     const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    let firstBatchError = null;
-    const batchSize = 500;
+    let errorCount = 0;
 
-    for (let i = 0; i < statements.length; i += batchSize) {
-      const chunkStatements = statements.slice(i, i + batchSize);
-      const chunkSql = 'BEGIN;\n' + chunkStatements.join(';\n') + ';\nCOMMIT;';
+    for (const stmt of statements) {
       try {
-        await client.query(chunkSql);
-        successCount += chunkStatements.length;
-      } catch (batchErr) {
-        await client.query('ROLLBACK;').catch(() => {});
-        console.warn(`Batch ${i} failed on Render: ${batchErr.message}`);
-        if (!firstBatchError) firstBatchError = batchErr.message;
-        for (const stmt of chunkStatements) {
-          try {
-            await client.query(stmt + ';');
-            successCount++;
-          } catch (e) {}
-        }
+        await client.query(stmt);
+        successCount++;
+      } catch (stmtErr) {
+        errorCount++;
       }
     }
 
