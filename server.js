@@ -333,7 +333,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    const batchSize = 1000;
+    const batchSize = 100;
 
     for (let i = 0; i < statements.length; i += batchSize) {
       const chunkStatements = statements.slice(i, i + batchSize);
