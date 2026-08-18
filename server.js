@@ -359,22 +359,20 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    const batchSize = 100;
+    const batchSize = 500;
 
     for (let i = 0; i < statements.length; i += batchSize) {
       const chunkStatements = statements.slice(i, i + batchSize);
+      const chunkSql = 'BEGIN;\n' + chunkStatements.join(';\n') + ';\nCOMMIT;';
       try {
-        await client.query('BEGIN;');
-        for (const stmt of chunkStatements) {
-          await client.query(stmt);
-        }
-        await client.query('COMMIT;');
+        await client.query(chunkSql);
         successCount += chunkStatements.length;
       } catch (batchErr) {
         await client.query('ROLLBACK;').catch(() => {});
+        console.warn(`Batch ${i} failed on Render: ${batchErr.message}`);
         for (const stmt of chunkStatements) {
           try {
-            await client.query(stmt);
+            await client.query(stmt + ';');
             successCount++;
           } catch (e) {}
         }
