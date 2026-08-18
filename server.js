@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const zlib = require('zlib');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -275,7 +276,11 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
   let client;
   try {
-    let sqlContent = req.file.buffer ? req.file.buffer.toString('utf8') : fs.readFileSync(req.file.path, 'utf8');
+    let fileBuffer = req.file.buffer ? req.file.buffer : fs.readFileSync(req.file.path);
+    if (fileBuffer && fileBuffer[0] === 0x1f && fileBuffer[1] === 0x8b) {
+      fileBuffer = zlib.gunzipSync(fileBuffer);
+    }
+    let sqlContent = fileBuffer.toString('utf8');
     
     // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
     sqlContent = convertCopyToInserts(sqlContent);
