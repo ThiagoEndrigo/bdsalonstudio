@@ -94,13 +94,17 @@ async function run() {
   const rawSql = fs.readFileSync('banco_salonstudio_2026-08-17_12-00-01.sql', 'utf8');
   let cleanSql = convertCopyToInserts(rawSql);
 
+  // 1. Strip comments, psql meta-commands, superuser statements, SET commands
   const cleanLines = cleanSql.split(/\r?\n/).filter(line => {
     const trimmed = line.trim();
+    if (trimmed.startsWith('--')) return false;
     if (trimmed.startsWith('\\')) return false;
     if (trimmed.includes('OWNER TO')) return false;
     if (trimmed.includes('EXTENSION')) return false;
     if (trimmed.includes('GRANT ')) return false;
     if (trimmed.includes('REVOKE ')) return false;
+    if (trimmed.startsWith('SET ')) return false;
+    if (trimmed.includes('SELECT pg_catalog.set_config')) return false;
     return true;
   });
   cleanSql = cleanLines.join('\n');
@@ -118,13 +122,12 @@ async function run() {
     }
   }
 
-  // Inject DROP TYPE IF EXISTS CASCADE before CREATE TYPE
-  cleanSql = cleanSql.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
   cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
   cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+  cleanSql = cleanSql.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
 
   const statements = splitSqlStatements(cleanSql);
-  console.log(`Parsed ${statements.length} statements.`);
+  console.log(`Parsed ${statements.length} clean statements.`);
 
   let successCount = 0;
   const batchSize = 1000;
@@ -134,7 +137,7 @@ async function run() {
     try {
       await client.query(chunkSql);
       successCount += chunkStatements.length;
-      console.log(`Batch ${i} SUCCESS!`);
+      console.log(`Batch ${i} SUCCESS (${chunkStatements.length} statements)`);
     } catch (batchErr) {
       console.warn(`Batch ${i} failed:`, batchErr.message);
       for (const stmt of chunkStatements) {

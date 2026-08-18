@@ -285,11 +285,20 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
     sqlContent = convertCopyToInserts(sqlContent);
 
-    // 2. Strip psql meta-commands and superuser-only statements (EXTENSION, OWNER TO, GRANT)
-    sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
-    sqlContent = sqlContent.replace(/^.*EXTENSION.*$/gm, '');
-    sqlContent = sqlContent.replace(/^.*OWNER TO .*$/gm, '');
-    sqlContent = sqlContent.replace(/^.*GRANT ALL ON .*$/gm, '');
+    // 2. Strip comments, psql meta-commands, superuser statements, SET commands
+    const cleanLines = sqlContent.split(/\r?\n/).filter(line => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('--')) return false;
+      if (trimmed.startsWith('\\')) return false;
+      if (trimmed.includes('OWNER TO')) return false;
+      if (trimmed.includes('EXTENSION')) return false;
+      if (trimmed.includes('GRANT ')) return false;
+      if (trimmed.includes('REVOKE ')) return false;
+      if (trimmed.startsWith('SET ')) return false;
+      if (trimmed.includes('SELECT pg_catalog.set_config')) return false;
+      return true;
+    });
+    sqlContent = cleanLines.join('\n');
 
     // 3. Extract schemas to drop old conflicting versions for ultra-fast clean restore
     const schemaMatches = sqlContent.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
@@ -303,33 +312,24 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
       }
     }
 
-    // 4. Add IF NOT EXISTS to DDL
+    // 4. Inject safe DDL replacements
     sqlContent = sqlContent.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
     sqlContent = sqlContent.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+    sqlContent = sqlContent.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
 
+    const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    try {
-      // Execute entire dump in a single transaction for maximum speed (takes ~2s on 4MB dumps)
-      await client.query('BEGIN;');
-      await client.query(sqlContent);
-      await client.query('COMMIT;');
-      successCount = (sqlContent.match(/;/g) || []).length;
-    } catch (singleErr) {
-      await client.query('ROLLBACK;');
-      console.warn('Single transaction failed, falling back to mega-batches:', singleErr.message);
+    const batchSize = 1000;
 
-      // Fallback: Split statements and execute in mega-batches
-      const statements = splitSqlStatements(sqlContent);
-      const batchSize = 500;
-      for (let i = 0; i < statements.length; i += batchSize) {
-        const chunkSql = statements.slice(i, i + batchSize).join(';\n') + ';';
-        try {
-          await client.query(chunkSql);
-          successCount += Math.min(batchSize, statements.length - i);
-        } catch (batchErr) {
-          for (const stmt of statements.slice(i, i + batchSize)) {
-            try { await client.query(stmt + ';'); successCount++; } catch (e) {}
-          }
+    for (let i = 0; i < statements.length; i += batchSize) {
+      const chunkStatements = statements.slice(i, i + batchSize);
+      const chunkSql = chunkStatements.join(';\n') + ';';
+      try {
+        await client.query(chunkSql);
+        successCount += chunkStatements.length;
+      } catch (batchErr) {
+        for (const stmt of chunkStatements) {
+          try { await client.query(stmt + ';'); successCount++; } catch (e) {}
         }
       }
     }
