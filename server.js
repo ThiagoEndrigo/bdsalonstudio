@@ -395,6 +395,8 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     res.json({
       message: `Banco '${originalName}' importado com sucesso em ${duration}ms! (${successCount} comandos executados)`,
       duration,
+      statementsCount: statements.length,
+      sqlContentLength: sqlContent.length,
       firstBatchError,
       schemas: schemasRes.rows.map(r => r.nspname)
     });
