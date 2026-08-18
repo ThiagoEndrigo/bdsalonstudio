@@ -553,7 +553,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         clearInterval(timer);
 
-        const data = await res.json();
+        let data = {};
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          const text = await res.text();
+          throw new Error(`O servidor respondeu com status ${res.status}: ${text.slice(0, 100)}`);
+        }
 
         btnCancelUpload.disabled = false;
         if (!res.ok || data.error) {

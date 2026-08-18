@@ -525,8 +525,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }, 1000);
 
+      let blobToSend = fileToUpload;
+      let filenameToSend = fileToUpload.name;
+
+      if (window.fflate && !fileToUpload.name.endsWith('.gz')) {
+        try {
+          uploadStatusText.textContent = `Compactando '${fileToUpload.name}' no seu navegador para envio ultra rápido...`;
+          const arrayBuffer = await fileToUpload.arrayBuffer();
+          const uint8 = new Uint8Array(arrayBuffer);
+          const compressed = fflate.gzipSync(uint8);
+          blobToSend = new Blob([compressed], { type: 'application/gzip' });
+          filenameToSend = fileToUpload.name + '.gz';
+          const savedSize = ((1 - blobToSend.size / fileToUpload.size) * 100).toFixed(0);
+          uploadStatusText.textContent = `Arquivo compactado em ${savedSize}%! Enviando para o Render... (0s)`;
+        } catch (e) {
+          console.warn('Compressão no cliente falhou, enviando arquivo original:', e);
+        }
+      }
+
       const formData = new FormData();
-      formData.append('sqlFile', fileToUpload);
+      formData.append('sqlFile', blobToSend, filenameToSend);
 
       try {
         const res = await fetch(getApiUrl('/api/upload'), {
@@ -535,7 +553,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         clearInterval(timer);
 
-        const data = await res.json();
+        let data = {};
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await res.json();
+        } else {
+          const text = await res.text();
+          throw new Error(`O servidor respondeu com status ${res.status}: ${text.slice(0, 100)}`);
+        }
 
         btnCancelUpload.disabled = false;
         if (!res.ok || data.error) {

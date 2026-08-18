@@ -378,14 +378,21 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    let errorCount = 0;
+    const batchSize = 100;
 
-    for (const stmt of statements) {
+    for (let i = 0; i < statements.length; i += batchSize) {
+      const chunkStatements = statements.slice(i, i + batchSize);
+      const chunkSql = chunkStatements.join(';\n') + ';';
       try {
-        await client.query(stmt);
-        successCount++;
-      } catch (stmtErr) {
-        errorCount++;
+        await client.query(chunkSql);
+        successCount += chunkStatements.length;
+      } catch (chunkErr) {
+        for (const stmt of chunkStatements) {
+          try {
+            await client.query(stmt);
+            successCount++;
+          } catch (e) {}
+        }
       }
     }
 

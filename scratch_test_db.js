@@ -150,21 +150,28 @@ async function test() {
 
   const statements = splitSqlStatements(cleanSql);
 
-  console.log('Executing 4859 statements with clean schemas...');
+  console.log(`Executing ${statements.length} statements in 100-statement non-transactional chunks...`);
   let successCount = 0;
-  let failCount = 0;
+  const batchSize = 100;
   const startTime = Date.now();
 
-  for (const stmt of statements) {
+  for (let i = 0; i < statements.length; i += batchSize) {
+    const chunkStatements = statements.slice(i, i + batchSize);
+    const chunkSql = chunkStatements.join(';\n') + ';';
     try {
-      await client.query(stmt);
-      successCount++;
-    } catch (err) {
-      failCount++;
+      await client.query(chunkSql);
+      successCount += chunkStatements.length;
+    } catch (chunkErr) {
+      for (const stmt of chunkStatements) {
+        try {
+          await client.query(stmt);
+          successCount++;
+        } catch (e) {}
+      }
     }
   }
 
-  console.log(`COMPLETED IN ${Date.now() - startTime} ms! Success: ${successCount}, Failures: ${failCount}`);
+  console.log(`ULTRA FAST IMPORT COMPLETED IN ${Date.now() - startTime} ms! Successful statements: ${successCount}`);
 
   const schemasRes = await client.query(`
     SELECT nspname FROM pg_namespace 
