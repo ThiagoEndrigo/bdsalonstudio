@@ -8,12 +8,11 @@ const multer = require('multer');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Setup upload directory
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-const upload = multer({ dest: uploadDir });
+// Setup upload storage in memory
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
 
 const connectionString = process.env.DATABASE_URL;
 const isExternalHost = process.env.PGHOST && process.env.PGHOST !== '127.0.0.1' && process.env.PGHOST !== 'localhost';
@@ -271,13 +270,12 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
   }
 
-  const filePath = req.file.path;
   const originalName = req.file.originalname;
   const startTime = Date.now();
 
   let client;
   try {
-    let sqlContent = fs.readFileSync(filePath, 'utf8');
+    let sqlContent = req.file.buffer ? req.file.buffer.toString('utf8') : fs.readFileSync(req.file.path, 'utf8');
     
     // 1. Convert any pg_dump "COPY table FROM stdin" blocks into standard INSERT INTO statements
     sqlContent = convertCopyToInserts(sqlContent);
@@ -347,7 +345,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     client.release();
     
-    try { fs.unlinkSync(filePath); } catch (e) {}
+    if (req.file.path) { try { fs.unlinkSync(req.file.path); } catch (e) {} }
 
     const duration = Date.now() - startTime;
     const schemasRes = await pool.query(`
@@ -363,7 +361,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     });
   } catch (err) {
     if (client) client.release();
-    try { fs.unlinkSync(filePath); } catch (e) {}
+    if (req.file && req.file.path) { try { fs.unlinkSync(req.file.path); } catch (e) {} }
     console.error('Erro na importação SQL:', err);
     res.status(500).json({ error: 'Falha ao importar SQL para o banco: ' + err.message });
   }
