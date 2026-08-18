@@ -358,6 +358,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     sqlContent = sqlContent.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
 
     let successCount = 0;
+    let importError = null;
 
     // Try executing entire cleaned dump in a single transaction for ~5s clean restore
     try {
@@ -367,7 +368,8 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
       successCount = (sqlContent.match(/;/g) || []).length;
     } catch (singleErr) {
       await client.query('ROLLBACK;').catch(() => {});
-      console.warn('Single transaction failed, falling back to batch execution:', singleErr.message);
+      console.error('Single transaction failed on Render:', singleErr.message);
+      importError = singleErr.message;
 
       const statements = splitSqlStatements(sqlContent);
       const batchSize = 50;
@@ -386,9 +388,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
             try {
               await client.query(stmt + ';');
               successCount++;
-            } catch (e) {
-              await client.query('ROLLBACK;').catch(() => {});
-            }
+            } catch (e) {}
           }
         }
       }
@@ -408,6 +408,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     res.json({
       message: `Banco '${originalName}' importado com sucesso em ${duration}ms! (${successCount} comandos executados)`,
       duration,
+      importError,
       schemas: schemasRes.rows.map(r => r.nspname)
     });
   } catch (err) {
