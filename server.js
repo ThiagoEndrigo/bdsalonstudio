@@ -412,7 +412,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
       duration,
       statementsCount: statements.length,
       sqlContentLength: sqlContent.length,
-      firstBatchError,
+      successCount,
       schemas: schemasRes.rows.map(r => r.nspname)
     });
   } catch (err) {
