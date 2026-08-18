@@ -357,20 +357,39 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     sqlContent = sqlContent.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
     sqlContent = sqlContent.replace(/CREATE TYPE ([^\s]+)/gi, 'DROP TYPE IF EXISTS $1 CASCADE; CREATE TYPE $1');
 
-    const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
-    const batchSize = 100;
 
-    for (let i = 0; i < statements.length; i += batchSize) {
-      const chunkStatements = statements.slice(i, i + batchSize);
-      const chunkSql = chunkStatements.join(';\n') + ';';
-      try {
-        await client.query(chunkSql);
-        successCount += chunkStatements.length;
-      } catch (batchErr) {
-        console.error(`Batch ${i} failed on Render: ${batchErr.message}`);
-        for (const stmt of chunkStatements) {
-          try { await client.query(stmt + ';'); successCount++; } catch (e) {}
+    // Try executing entire cleaned dump in a single transaction for ~5s clean restore
+    try {
+      await client.query('BEGIN;');
+      await client.query(sqlContent);
+      await client.query('COMMIT;');
+      successCount = (sqlContent.match(/;/g) || []).length;
+    } catch (singleErr) {
+      await client.query('ROLLBACK;').catch(() => {});
+      console.warn('Single transaction failed, falling back to batch execution:', singleErr.message);
+
+      const statements = splitSqlStatements(sqlContent);
+      const batchSize = 50;
+
+      for (let i = 0; i < statements.length; i += batchSize) {
+        const chunkStatements = statements.slice(i, i + batchSize);
+        const chunkSql = chunkStatements.join(';\n') + ';';
+        try {
+          await client.query('BEGIN;');
+          await client.query(chunkSql);
+          await client.query('COMMIT;');
+          successCount += chunkStatements.length;
+        } catch (batchErr) {
+          await client.query('ROLLBACK;').catch(() => {});
+          for (const stmt of chunkStatements) {
+            try {
+              await client.query(stmt + ';');
+              successCount++;
+            } catch (e) {
+              await client.query('ROLLBACK;').catch(() => {});
+            }
+          }
         }
       }
     }

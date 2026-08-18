@@ -44,70 +44,6 @@ function convertCopyToInserts(sql) {
   return resultLines.join('\n');
 }
 
-function splitSqlStatements(sql) {
-  const statements = [];
-  let current = '';
-  let inString = false;
-  let quoteChar = '';
-  let inDollar = false;
-  let dollarTag = '';
-
-  for (let i = 0; i < sql.length; i++) {
-    const char = sql[i];
-
-    if (!inString && !inDollar && char === '$') {
-      const match = sql.slice(i).match(/^(\$[a-zA-Z0-9_]*\$)/);
-      if (match) {
-        inDollar = true;
-        dollarTag = match[1];
-        current += dollarTag;
-        i += dollarTag.length - 1;
-        continue;
-      }
-    } else if (inDollar && char === '$') {
-      if (sql.slice(i).startsWith(dollarTag)) {
-        inDollar = false;
-        current += dollarTag;
-        i += dollarTag.length - 1;
-        dollarTag = '';
-        continue;
-      }
-    }
-
-    if (inDollar) {
-      current += char;
-      continue;
-    }
-
-    if (inString) {
-      current += char;
-      if (char === quoteChar) {
-        if (i + 1 < sql.length && sql[i + 1] === quoteChar) {
-          current += quoteChar;
-          i++;
-        } else {
-          inString = false;
-        }
-      }
-    } else {
-      if (char === "'" || char === '"') {
-        inString = true;
-        quoteChar = char;
-        current += char;
-      } else if (char === ';') {
-        const trimmed = current.trim();
-        if (trimmed) statements.push(trimmed);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-  }
-  const trimmed = current.trim();
-  if (trimmed) statements.push(trimmed);
-  return statements;
-}
-
 async function run() {
   const pool = new Pool({
     host: '127.0.0.1',
@@ -134,12 +70,40 @@ async function run() {
   });
   cleanSql = cleanLines.join('\n');
 
-  const statements = splitSqlStatements(cleanSql);
-  console.log(`Parsed ${statements.length} clean statements with dollar-quote protection.`);
+  const schemaMatches = cleanSql.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
+  const schemasToDrop = schemaMatches.map(s => s.replace(/CREATE SCHEMA ([^\s;]+);/i, '$1'));
 
-  let functionsCount = statements.filter(s => s.toLowerCase().includes('function') || s.toLowerCase().includes('procedure')).length;
-  console.log(`Found ${functionsCount} function/procedure statements intact.`);
-  
+  const startTime = Date.now();
+  const client = await pool.connect();
+
+  for (const schema of schemasToDrop) {
+    if (schema !== 'public') {
+      try { await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE;`); } catch (e) {}
+    }
+  }
+
+  cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
+  cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+
+  console.log('Testing single-transaction execution of entire dump...');
+  try {
+    await client.query('BEGIN;');
+    await client.query(cleanSql);
+    await client.query('COMMIT;');
+    console.log(`SINGLE TRANSACTION SUCCESS IN ${Date.now() - startTime} ms!`);
+  } catch (err) {
+    await client.query('ROLLBACK;');
+    console.error('SINGLE TRANSACTION FAILED:', err.message);
+  }
+
+  const schemasRes = await client.query(`
+    SELECT nspname FROM pg_namespace 
+    WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema'
+    ORDER BY nspname;
+  `);
+  console.log('CREATED SCHEMAS:', schemasRes.rows.map(r => r.nspname));
+
+  client.release();
   await pool.end();
 }
 
