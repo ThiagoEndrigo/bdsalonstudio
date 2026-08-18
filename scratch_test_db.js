@@ -44,44 +44,6 @@ function convertCopyToInserts(sql) {
   return resultLines.join('\n');
 }
 
-function splitSqlStatements(sql) {
-  const statements = [];
-  let current = '';
-  let inString = false;
-  let quoteChar = '';
-
-  for (let i = 0; i < sql.length; i++) {
-    const char = sql[i];
-    
-    if (inString) {
-      current += char;
-      if (char === quoteChar) {
-        if (i + 1 < sql.length && sql[i + 1] === quoteChar) {
-          current += quoteChar;
-          i++;
-        } else {
-          inString = false;
-        }
-      }
-    } else {
-      if (char === "'" || char === '"') {
-        inString = true;
-        quoteChar = char;
-        current += char;
-      } else if (char === ';') {
-        const trimmed = current.trim();
-        if (trimmed) statements.push(trimmed);
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-  }
-  const trimmed = current.trim();
-  if (trimmed) statements.push(trimmed);
-  return statements;
-}
-
 async function run() {
   const pool = new Pool({
     host: '127.0.0.1',
@@ -94,56 +56,40 @@ async function run() {
   const rawSql = fs.readFileSync('banco_salonstudio_2026-08-17_12-00-01.sql', 'utf8');
   let cleanSql = convertCopyToInserts(rawSql).replace(/^\\.*$/gm, '').trim();
 
-  // Add IF NOT EXISTS to DDL statements
-  cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
-  cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
-  cleanSql = cleanSql.replace(/CREATE SEQUENCE ([^\s;]+)/gi, 'CREATE SEQUENCE IF NOT EXISTS $1');
-  cleanSql = cleanSql.replace(/CREATE INDEX ([^\s]+)\s+ON/gi, 'CREATE INDEX IF NOT EXISTS $1 ON');
+  // Extract schemas from the SQL file (e.g. CREATE SCHEMA company_deboranails;)
+  const schemaMatches = cleanSql.match(/CREATE SCHEMA ([^\s;]+);/gi) || [];
+  const schemasToDrop = schemaMatches.map(s => s.replace(/CREATE SCHEMA ([^\s;]+);/i, '$1'));
+
+  console.log('Schemas detected in dump:', schemasToDrop);
 
   const startTime = Date.now();
   const client = await pool.connect();
   
-  const statements = splitSqlStatements(cleanSql);
-  console.log(`Parsed ${statements.length} statements.`);
-
-  const ddlStatements = [];
-  const insertStatements = [];
-
-  for (const stmt of statements) {
-    if (stmt.toUpperCase().startsWith('INSERT INTO')) {
-      insertStatements.push(stmt);
-    } else {
-      ddlStatements.push(stmt);
+  // Drop existing schemas to prevent DDL conflicts
+  for (const schema of schemasToDrop) {
+    if (schema !== 'public') {
+      try {
+        await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE;`);
+      } catch (e) {}
     }
   }
 
-  console.log(`DDL statements: ${ddlStatements.length}, INSERT statements: ${insertStatements.length}`);
+  // Add IF NOT EXISTS just in case
+  cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
 
-  // 1. Execute DDL in a single block or small chunks
+  console.log('Executing full SQL dump in 1 single transaction...');
   try {
-    await client.query(ddlStatements.join(';\n') + ';');
+    await client.query('BEGIN;');
+    await client.query(cleanSql);
+    await client.query('COMMIT;');
+    console.log(`FULL IMPORT SUCCESS in ${Date.now() - startTime} ms!`);
   } catch (err) {
-    for (const stmt of ddlStatements) {
-      try { await client.query(stmt + ';'); } catch (e) {}
-    }
+    await client.query('ROLLBACK;');
+    console.error('Single transaction error:', err.message);
+  } finally {
+    client.release();
+    await pool.end();
   }
-
-  // 2. Execute INSERTS in large chunks of 1,000 statements
-  const batchSize = 1000;
-  for (let i = 0; i < insertStatements.length; i += batchSize) {
-    const chunk = insertStatements.slice(i, i + batchSize).join(';\n') + ';';
-    try {
-      await client.query(chunk);
-    } catch (err) {
-      for (const stmt of insertStatements.slice(i, i + batchSize)) {
-        try { await client.query(stmt + ';'); } catch (e) {}
-      }
-    }
-  }
-
-  console.log(`Import COMPLETE in ${Date.now() - startTime} ms!`);
-  client.release();
-  await pool.end();
 }
 
 run();
