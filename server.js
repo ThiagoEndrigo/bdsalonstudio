@@ -309,7 +309,15 @@ function splitSqlStatements(sql) {
 }
 
 // Upload and import SQL file into PostgreSQL
-app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
+app.post('/api/upload', (req, res, next) => {
+  upload.single('sqlFile')(req, res, (err) => {
+    if (err) {
+      console.error('Multer upload error:', err);
+      return res.status(400).json({ error: 'Erro no upload do arquivo: ' + err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   req.setTimeout(10 * 60 * 1000); // 10 minutes timeout for large files
   res.setTimeout(10 * 60 * 1000);
 
@@ -463,7 +471,10 @@ app.get('/api/templates', (req, res) => {
       sql: `SELECT id, cliente_nome, data_hora, valor_total, status, valor_pago\nFROM agendamentos\nWHERE deletado = 'N'\nORDER BY data_hora DESC\nLIMIT 20;`
     }
   ];
-  res.json({ templates });
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global server error:', err);
+  res.status(500).json({ error: err.message || 'Erro interno no servidor' });
 });
 
 const HOST = '0.0.0.0';
