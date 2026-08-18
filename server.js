@@ -342,6 +342,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
         await client.query(chunkSql);
         successCount += chunkStatements.length;
       } catch (batchErr) {
+        console.error(`Batch ${i} failed on Render: ${batchErr.message}`);
         for (const stmt of chunkStatements) {
           try { await client.query(stmt + ';'); successCount++; } catch (e) {}
         }
