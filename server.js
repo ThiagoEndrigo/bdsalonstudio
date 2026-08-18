@@ -56,9 +56,23 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Version check endpoint
-app.get('/api/version', (req, res) => {
-  res.json({ version: 'v3.5-mega-chunk-fix', time: new Date().toISOString() });
+// Diagnostic test schema creation route
+app.get('/api/test-create-schema', async (req, res) => {
+  try {
+    const createRes = await pool.query('CREATE SCHEMA IF NOT EXISTS company_keilafrutuoso;');
+    const schemasRes = await pool.query(`
+      SELECT nspname FROM pg_namespace 
+      WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema'
+      ORDER BY nspname;
+    `);
+    res.json({
+      success: true,
+      createResult: createRes,
+      schemas: schemasRes.rows.map(r => r.nspname)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
 });
 
 // Get schemas
