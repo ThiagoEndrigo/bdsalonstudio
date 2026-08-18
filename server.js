@@ -230,10 +230,36 @@ function splitSqlStatements(sql) {
   let current = '';
   let inString = false;
   let quoteChar = '';
+  let inDollar = false;
+  let dollarTag = '';
 
   for (let i = 0; i < sql.length; i++) {
     const char = sql[i];
-    
+
+    if (!inString && !inDollar && char === '$') {
+      const match = sql.slice(i).match(/^(\$[a-zA-Z0-9_]*\$)/);
+      if (match) {
+        inDollar = true;
+        dollarTag = match[1];
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        continue;
+      }
+    } else if (inDollar && char === '$') {
+      if (sql.slice(i).startsWith(dollarTag)) {
+        inDollar = false;
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        dollarTag = '';
+        continue;
+      }
+    }
+
+    if (inDollar) {
+      current += char;
+      continue;
+    }
+
     if (inString) {
       current += char;
       if (char === quoteChar) {
