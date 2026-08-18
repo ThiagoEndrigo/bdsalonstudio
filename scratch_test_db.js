@@ -44,6 +44,70 @@ function convertCopyToInserts(sql) {
   return resultLines.join('\n');
 }
 
+function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let inString = false;
+  let quoteChar = '';
+  let inDollar = false;
+  let dollarTag = '';
+
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+
+    if (!inString && !inDollar && char === '$') {
+      const match = sql.slice(i).match(/^(\$[a-zA-Z0-9_]*\$)/);
+      if (match) {
+        inDollar = true;
+        dollarTag = match[1];
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        continue;
+      }
+    } else if (inDollar && char === '$') {
+      if (sql.slice(i).startsWith(dollarTag)) {
+        inDollar = false;
+        current += dollarTag;
+        i += dollarTag.length - 1;
+        dollarTag = '';
+        continue;
+      }
+    }
+
+    if (inDollar) {
+      current += char;
+      continue;
+    }
+
+    if (inString) {
+      current += char;
+      if (char === quoteChar) {
+        if (i + 1 < sql.length && sql[i + 1] === quoteChar) {
+          current += quoteChar;
+          i++;
+        } else {
+          inString = false;
+        }
+      }
+    } else {
+      if (char === "'" || char === '"') {
+        inString = true;
+        quoteChar = char;
+        current += char;
+      } else if (char === ';') {
+        const trimmed = current.trim();
+        if (trimmed) statements.push(trimmed);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+  }
+  const trimmed = current.trim();
+  if (trimmed) statements.push(trimmed);
+  return statements;
+}
+
 async function run() {
   const pool = new Pool({
     host: '127.0.0.1',
@@ -85,16 +149,36 @@ async function run() {
   cleanSql = cleanSql.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
   cleanSql = cleanSql.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
 
-  console.log('Testing single-transaction execution of entire dump...');
-  try {
-    await client.query('BEGIN;');
-    await client.query(cleanSql);
-    await client.query('COMMIT;');
-    console.log(`SINGLE TRANSACTION SUCCESS IN ${Date.now() - startTime} ms!`);
-  } catch (err) {
-    await client.query('ROLLBACK;');
-    console.error('SINGLE TRANSACTION FAILED:', err.message);
+  const statements = splitSqlStatements(cleanSql);
+  console.log(`Parsed ${statements.length} clean statements.`);
+
+  let successCount = 0;
+  const batchSize = 100;
+
+  for (let i = 0; i < statements.length; i += batchSize) {
+    const chunkStatements = statements.slice(i, i + batchSize);
+    try {
+      await client.query('BEGIN;');
+      for (const stmt of chunkStatements) {
+        await client.query(stmt);
+      }
+      await client.query('COMMIT;');
+      successCount += chunkStatements.length;
+    } catch (batchErr) {
+      await client.query('ROLLBACK;').catch(() => {});
+      console.warn(`Batch ${i} failed:`, batchErr.message);
+      for (const stmt of chunkStatements) {
+        try {
+          await client.query(stmt);
+          successCount++;
+        } catch (e) {
+          console.error('Single stmt failed:', stmt.slice(0, 80), '->', e.message);
+        }
+      }
+    }
   }
+
+  console.log(`IMPORT COMPLETED IN ${Date.now() - startTime} ms with ${successCount} / ${statements.length} successful statements!`);
 
   const schemasRes = await client.query(`
     SELECT nspname FROM pg_namespace 
