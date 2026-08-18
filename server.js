@@ -359,6 +359,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
 
     const statements = splitSqlStatements(sqlContent);
     let successCount = 0;
+    let firstBatchError = null;
     const batchSize = 500;
 
     for (let i = 0; i < statements.length; i += batchSize) {
@@ -370,6 +371,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
       } catch (batchErr) {
         await client.query('ROLLBACK;').catch(() => {});
         console.warn(`Batch ${i} failed on Render: ${batchErr.message}`);
+        if (!firstBatchError) firstBatchError = batchErr.message;
         for (const stmt of chunkStatements) {
           try {
             await client.query(stmt + ';');
@@ -393,7 +395,7 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     res.json({
       message: `Banco '${originalName}' importado com sucesso em ${duration}ms! (${successCount} comandos executados)`,
       duration,
-      importError,
+      firstBatchError,
       schemas: schemasRes.rows.map(r => r.nspname)
     });
   } catch (err) {
