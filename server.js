@@ -285,21 +285,50 @@ app.post('/api/upload', upload.single('sqlFile'), async (req, res) => {
     // 2. Strip psql meta-commands (e.g. \connect, \set, \q, \encoding) that are invalid raw SQL
     sqlContent = sqlContent.replace(/^\\.*$/gm, '').trim();
 
-    // 3. Add IF NOT EXISTS to CREATE SCHEMA and CREATE TABLE statements
+    // 3. Add IF NOT EXISTS to CREATE SCHEMA, CREATE TABLE, CREATE SEQUENCE, CREATE INDEX
     sqlContent = sqlContent.replace(/CREATE SCHEMA ([^\s;]+);/gi, 'CREATE SCHEMA IF NOT EXISTS $1;');
     sqlContent = sqlContent.replace(/CREATE TABLE ([^\s(]+)/gi, 'CREATE TABLE IF NOT EXISTS $1');
+    sqlContent = sqlContent.replace(/CREATE SEQUENCE ([^\s;]+)/gi, 'CREATE SEQUENCE IF NOT EXISTS $1');
+    sqlContent = sqlContent.replace(/CREATE INDEX ([^\s]+)\s+ON/gi, 'CREATE INDEX IF NOT EXISTS $1 ON');
 
     client = await pool.connect();
     
     // 4. Split SQL into individual statements using ultra-fast linear parser O(N)
     const statements = splitSqlStatements(sqlContent);
 
+    const ddlStatements = [];
+    const insertStatements = [];
+
+    for (const stmt of statements) {
+      if (stmt.toUpperCase().startsWith('INSERT INTO')) {
+        insertStatements.push(stmt);
+      } else {
+        ddlStatements.push(stmt);
+      }
+    }
+
     let successCount = 0;
     let skipCount = 0;
-    const batchSize = 100;
 
-    for (let i = 0; i < statements.length; i += batchSize) {
-      const chunkStatements = statements.slice(i, i + batchSize);
+    // 4a. Execute DDL in a single block or small chunks
+    try {
+      await client.query(ddlStatements.join(';\n') + ';');
+      successCount += ddlStatements.length;
+    } catch (err) {
+      for (const stmt of ddlStatements) {
+        try {
+          await client.query(stmt + ';');
+          successCount++;
+        } catch (e) {
+          skipCount++;
+        }
+      }
+    }
+
+    // 4b. Execute INSERTS in large 1,000-statement mega-batches for ultra performance
+    const batchSize = 1000;
+    for (let i = 0; i < insertStatements.length; i += batchSize) {
+      const chunkStatements = insertStatements.slice(i, i + batchSize);
       const chunkSql = chunkStatements.join(';\n') + ';';
       try {
         await client.query(chunkSql);
